@@ -24,9 +24,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--WHITEN', default= True, help='',type=bool)
 parser.add_argument('--NOISE_STD', default= 0, help='',type=float)
 parser.add_argument('--LR_GAN', default=.001  , help='',type=float)
-parser.add_argument('--LAMBDA', default=1, help='',type=float)
-parser.add_argument('--LAMBDA1', default=.1, help='',type=float)
-parser.add_argument('--NENT', default=  1.0, help='',type=float)
+parser.add_argument('--LAMBDA', default=0, help='',type=float)
+parser.add_argument('--LAMBDA1', default=0, help='',type=float)
+parser.add_argument('--init_sigma', default= -1.5, help='',type=float)
+
 
 parser.add_argument('--EPOCHS', default=500000, help='',type=int)
 parser.add_argument('--OPTI', default='adam', help='',type=str)
@@ -41,8 +42,8 @@ parser.add_argument('--L', default=1, help='',type=int)
 parser.add_argument('--NX', default=6, help='',type=int)
 parser.add_argument('--NZ', default=6, help='',type=int)
 
-parser.add_argument('--POSTERIOR_NK', default=10, help='',type=int)
-parser.add_argument('--PRIOR_NK', default=100 , help='',type=int)
+parser.add_argument('--POSTERIOR_NK', default=4, help='',type=int)
+parser.add_argument('--PRIOR_NK', default=10 , help='',type=int)
 
 
 parser.add_argument('--ZM', default=0, help='',type=int)
@@ -56,7 +57,7 @@ parser.add_argument('--NH', default=200, help='',type=int)
 parser.add_argument('--NH_PX', default=200, help='',type=int)
 
 parser.add_argument('--SF', default='exp', help='',type=str)
-parser.add_argument('--SFPX', default='exp', help='',type=str)
+parser.add_argument('--SFPX', default='softplus', help='',type=str)
 parser.add_argument('--ACT', default='tanh', help='',type=str)
 
 parser.add_argument('--NHFZ', default=2, help='',type=int)
@@ -71,7 +72,7 @@ parser.add_argument('--POSTERIOR_IAF_NH', default=128*2, help='',type=int)
 
 
 
-parser.add_argument('--TASK', default='linear', help='linear/pnl/mlp/sin/cos/axbx2',type=str)
+parser.add_argument('--TASK', default='mlp', help='linear/pnl/mlp/sin/cos/axbx2',type=str)
 args = parser.parse_args()
 
 print('displaying config setting...')
@@ -151,8 +152,7 @@ with tf.variable_scope('pdfError', reuse= tf.AUTO_REUSE) :
 
 
     if args.SINGLEVAR==1:
-        # scale_px = activations[args.SFPX]( bias_variable([], value=-1., name='scale')  )
-        scale_px = tf.exp( bias_variable([], value=np.log(.05,dtype=np.float32), name='scale')  )
+        scale_px = activations[args.SFPX]( bias_variable([], value=args.init_sigma, name='scale')  )
         scale_px=tf.stack( [scale_px]*args.NX,-1)
         loc = bias_variable([args.NX], value=0., name='loc') 
         if args.ZEROMEANPX == 1:
@@ -160,7 +160,7 @@ with tf.variable_scope('pdfError', reuse= tf.AUTO_REUSE) :
         pdfError = tfd.MultivariateNormalDiag( loc = loc , scale_diag=  scale_px   )
 
     if args.SINGLEVAR==0:
-        scale_px = activations[args.SFPX](bias_variable([args.NX], value=[np.log(.5,dtype=np.float32)]*args.NZ, name='scale') )
+        scale_px = activations[args.SFPX](bias_variable([args.NX], value=[args.init_sigma]*args.NZ, name='scale') )
         loc = bias_variable([args.NX], value=0., name='loc') 
         if args.ZEROMEANPX == 1:
             loc = tf.zeros_like(loc)
@@ -222,7 +222,7 @@ for j in range(args.POSTERIOR_NK):
     L2j = L2jL/args.L
     L3j = L3jL/args.L
 
-    loss = loss - qy[:,j] * ( -tf.log(1.0e-17+qy[:,j]) -L1j + L2j + L3j  ) 
+    loss = loss - qy[:,j] * (  -L1j + L2j + L3j  ) 
     L1 += qy[:,j]*L1j
     L2 += qy[:,j]*L2j
     L3 += qy[:,j]*L3j
@@ -238,7 +238,7 @@ nent = cross_entropy_with_logits_loss(qy_logit,qy)
 # prediction_final_2 = tf.reduce_sum( tf.one_hot(ind,depth=args.POSTERIOR_NK, on_value=1.0,off_value =1.0) * predictions, axis=-1)
 prediction_final_2 = prediction_final
 
-loss = tf.reduce_mean(loss+ args.NENT*nent)
+loss = tf.reduce_mean(loss - nent )
 
 
  
