@@ -199,3 +199,9 @@ def get_gan_cost(logits):
 def cross_entropy_with_logits_loss(logits, targets):
     log_q = tf.nn.log_softmax(logits)
     return -tf.reduce_sum(targets * log_q, 1)
+def tf_cov(x):
+    mean_x = tf.reduce_mean(x, axis=0, keep_dims=True)
+    mx = tf.matmul(tf.transpose(mean_x), mean_x)
+    vx = tf.matmul(tf.transpose(x), x)/tf.cast(tf.shape(x)[0], tf.float32)
+    cov_xx = vx - mx
+    return cov_xx
