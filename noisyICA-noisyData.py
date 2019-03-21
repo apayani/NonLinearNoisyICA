@@ -1,3 +1,5 @@
+#like 3 but added clustering factor, w_clustering which controls the entropy of q(y)
+
 import numpy as np
 import sys
 import tensorflow as tf
@@ -22,11 +24,13 @@ parser = argparse.ArgumentParser()
 
 
 parser.add_argument('--WHITEN', default= True, help='',type=bool)
-parser.add_argument('--NOISE_STD', default= .01, help='',type=float)
+parser.add_argument('--NOISE_STD', default= .05, help='',type=float)
 parser.add_argument('--LR_GAN', default=.001  , help='',type=float)
-parser.add_argument('--LAMBDA', default=1, help='',type=float)
-parser.add_argument('--LAMBDA1', default=1, help='',type=float)
-parser.add_argument('--NENT', default=  1.0, help='',type=float)
+parser.add_argument('--LAMBDA', default=0., help='',type=float)
+parser.add_argument('--LAMBDA1', default=0, help='',type=float)
+parser.add_argument('--init_sigma', default= -1.5, help='',type=float)
+parser.add_argument('--w_clustering', default= 0., help='',type=float)
+
 
 parser.add_argument('--EPOCHS', default=500000, help='',type=int)
 parser.add_argument('--OPTI', default='adam', help='',type=str)
@@ -41,11 +45,11 @@ parser.add_argument('--L', default=1, help='',type=int)
 parser.add_argument('--NX', default=6, help='',type=int)
 parser.add_argument('--NZ', default=6, help='',type=int)
 
-parser.add_argument('--POSTERIOR_NK', default=10, help='',type=int)
-parser.add_argument('--PRIOR_NK', default=100 , help='',type=int)
+parser.add_argument('--POSTERIOR_NK', default=4, help='',type=int)
+parser.add_argument('--PRIOR_NK', default=10 , help='',type=int)
 
 
-parser.add_argument('--ZM', default=0, help='',type=int)
+parser.add_argument('--ZM', default=0, help='',type=int)    
 parser.add_argument('--SINGLEVAR', default=0, help='',type=int)
 parser.add_argument('--ZEROMEANPX', default=0, help='',type=int)
 
@@ -56,22 +60,22 @@ parser.add_argument('--NH', default=200, help='',type=int)
 parser.add_argument('--NH_PX', default=200, help='',type=int)
 
 parser.add_argument('--SF', default='exp', help='',type=str)
-parser.add_argument('--SFPX', default='exp', help='',type=str)
+parser.add_argument('--SFPX', default='softplus', help='',type=str)
 parser.add_argument('--ACT', default='tanh', help='',type=str)
 
 parser.add_argument('--NHFZ', default=2, help='',type=int)
 parser.add_argument('--ACTFZ', default='tanh', help='',type=str)
-parser.add_argument('--FZHL', default=100, help='',type=int)
+parser.add_argument('--FZHL', default=200, help='',type=int)
 
 parser.add_argument('--ACT_DISC', default='tanh', help='',type=str)
 
 parser.add_argument('--POSTERIOR_IAF', default=0, help='',type=int)
 parser.add_argument('--POSTERIOR_IAF_TYPE', default='iaf', help='affine/iaf/nvp/masked',type=str)
-parser.add_argument('--POSTERIOR_IAF_NH', default=128*2, help='',type=int)
+parser.add_argument('--POSTERIOR_IAF_NH', default=128*4, help='',type=int)
 
 
 
-parser.add_argument('--TASK', default='mlp', help='linear/pnl/mlp/sin/cos/axbx2',type=str)
+parser.add_argument('--TASK', default='linear', help='linear/pnl/mlp/sin/cos/axbx2',type=str)
 args = parser.parse_args()
 
 print('displaying config setting...')
@@ -144,15 +148,16 @@ def get_fz(z):
     with tf.variable_scope('fz', reuse= tf.AUTO_REUSE) :  
         for i in range(args.NHFZ):
             inps.append(  tf.layers.dense( tf.concat(inps,-1),args.FZHL, activation=activations[args.ACTFZ] , kernel_initializer=None,name= 'fz_layers_%d'%i ))
+        # fz = tf.layers.dense( tf.concat(inps,-1),args.NX, activation=None , kernel_initializer=None,name= 'fz_last' )
         fz = tf.layers.dense( tf.concat(inps,-1),args.NX, activation=None , kernel_initializer=None,name= 'fz_last' )
+        # fz = tf.layers.dense( tf.concat(inps,-1),args.NX, activation=None , kernel_initializer=tf.constant_initializer( np.eye(args.NZ).astype(np.float32)),name= 'fz_last' )
     return fz
 ###########################################################################################
 with tf.variable_scope('pdfError', reuse= tf.AUTO_REUSE) :  
 
 
     if args.SINGLEVAR==1:
-        # scale_px = activations[args.SFPX]( bias_variable([], value=-1., name='scale')  )
-        scale_px = tf.exp( bias_variable([], value=np.log(.05,dtype=np.float32), name='scale')  )
+        scale_px =  activations[args.SFPX]( bias_variable([], value=float(args.init_sigma), name='scale')  )
         scale_px=tf.stack( [scale_px]*args.NX,-1)
         loc = bias_variable([args.NX], value=0., name='loc') 
         if args.ZEROMEANPX == 1:
@@ -160,13 +165,13 @@ with tf.variable_scope('pdfError', reuse= tf.AUTO_REUSE) :
         pdfError = tfd.MultivariateNormalDiag( loc = loc , scale_diag=  scale_px   )
 
     if args.SINGLEVAR==0:
-        scale_px = activations[args.SFPX](bias_variable([args.NX], value=[np.log(.5,dtype=np.float32)]*args.NZ, name='scale') )
+        scale_px = activations[args.SFPX](bias_variable([args.NX], value=[ float(args.init_sigma)]*args.NZ, name='scale') )
         loc = bias_variable([args.NX], value=0., name='loc') 
         if args.ZEROMEANPX == 1:
             loc = tf.zeros_like(loc)
         pdfError = tfd.MultivariateNormalDiag( loc = loc, scale_diag=  scale_px   )
-    
-    
+
+
     if args.SINGLEVAR==2:
         scale_px = activations[args.SFPX](bias_variable([args.NX*(args.NX+1)//2], value=-1., name='scale') )
         loc = bias_variable([args.NX], value=0., name='loc') 
@@ -196,6 +201,13 @@ L3 = tf.constant(0.0)
 prediction_final = tf.constant(0.0)
 predictions=[]
 
+
+var_py = bias_variable([args.POSTERIOR_NK], value=np.random.uniform(1.0,10.,args.POSTERIOR_NK).astype(np.float32), name='py')
+pys = np.random.uniform(-20.0,-1.0,args.POSTERIOR_NK).astype(np.float32)
+pys = np.exp(pys)/np.sum( np.exp(pys))
+# py = tfd.Dirichlet( np.random.uniform(1.0,12.,args.POSTERIOR_NK).astype(np.float32))
+
+# py = tfd.Dirichlet( [1.0]*args.POSTERIOR_NK)
 with tf.variable_scope( 'posteriorY', reuse=False):
     qy_logit = FC( xb  , [args.NH,args.NH,args.POSTERIOR_NK] , [activations[args.ACT],activations[args.ACT],None], name = 'qy')
     qy = tf.nn.softmax(qy_logit,-1)
@@ -222,7 +234,9 @@ for j in range(args.POSTERIOR_NK):
     L2j = L2jL/args.L
     L3j = L3jL/args.L
 
-    loss = loss - qy[:,j] * ( -tf.log(1.0e-17+qy[:,j]) -L1j + L2j + L3j  ) 
+    # loss = loss - qy[:,j] * ( tf.log(1.0/args.POSTERIOR_NK) -L1j + L2j + L3j  ) 
+    loss = loss - qy[:,j] * ( pys[j] -L1j + L2j + L3j  ) 
+    # loss -= py.log_prob(qy)
     L1 += qy[:,j]*L1j
     L2 += qy[:,j]*L2j
     L3 += qy[:,j]*L3j
@@ -230,28 +244,44 @@ for j in range(args.POSTERIOR_NK):
 
 
  
-nent = cross_entropy_with_logits_loss(qy_logit,qy)
+qy_entropy = cross_entropy_with_logits_loss(qy_logit,qy)
 
-# predictions=tf.stack( predictions, -1)
-# ind = tf.argmax( qy, -1)
-# ind = tf.expand_dims(ind,-1)
-# prediction_final_2 = tf.reduce_sum( tf.one_hot(ind,depth=args.POSTERIOR_NK, on_value=1.0,off_value =1.0) * predictions, axis=-1)
-prediction_final_2 = prediction_final
+predictions=tf.stack( predictions, -1)
+ind = tf.argmax( qy, -1)
+ind = tf.expand_dims(ind,-1)
+prediction_final_2 = tf.reduce_sum( tf.one_hot(ind,depth=args.POSTERIOR_NK, on_value=1.0,off_value =0.0) * predictions, axis=-1)
+# prediction_final_2 = prediction_final
 
-loss = tf.reduce_mean(loss+ args.NENT*nent)
+loss = tf.reduce_mean(loss - qy_entropy)
 
 
  
 zs = prior.sample(args.BS) 
+
+# zs = resample_rows_per_column(prediction_final)
+# zs=tf.reshape( zs, [-1,args.NZ])
+
 r_logits = get_discreminator(zs)
 f_logits = get_discreminator(prediction_final)
 
 disc_loss = get_gan_cost(r_logits) + get_gan_cost(-f_logits)
-gen_loss = get_gan_cost(f_logits)
- 
-total_loss = loss+ disc_loss * args.LAMBDA1
- 
- 
+gen_loss =  get_gan_cost(f_logits)
+
+total_loss = loss+ disc_loss * args.LAMBDA1 +  tf.reduce_mean(qy_entropy*args.w_clustering)
+
+prediction_perm_mean = tf.reduce_mean(prediction_final, 0)
+prediction_perm_norm = prediction_final - prediction_perm_mean
+prediction_perm_sd = tf.sqrt(tf.reduce_mean(prediction_perm_norm**2, 0) + 1e-4)
+prediction_perm_norm /= prediction_perm_sd
+
+cov_pred = tf_cov(prediction_perm_norm)
+pen_cov1  = tf.square( cov_pred-tf.eye(args.NZ))
+pen_cov = tf.reduce_sum(pen_cov1)
+
+# total_loss += pen_cov*.01
+e = xb - get_fz(prediction_final)
+# e_loss = -pdfError.log_prob( e )
+e_loss = pen_cov
 ############################################################################################
 # training
 ############################################################################################
@@ -272,7 +302,7 @@ for v in vs:
 
 all_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES )
 disc_vars  = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,scope="disc")
-
+e_vars=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES )
 for item in disc_vars:
     all_vars.remove(item)
 
@@ -281,6 +311,7 @@ for item in disc_vars:
 if args.OPTI == 'adam':
     train_op = tf.train.AdamOptimizer(args.LR).minimize(total_loss ,var_list=all_vars)
     train_op_gan = tf.train.AdamOptimizer(args.LR_GAN ).minimize(disc_loss,var_list=disc_vars)
+    train_op_e = tf.train.AdamOptimizer(args.LR_GAN ).minimize(e_loss,var_list=e_vars)
 
 if args.OPTI == 'prop':
     train_op = tf.train.RMSPropOptimizer(args.LR).minimize(total_loss ,var_list=all_vars)
@@ -323,7 +354,9 @@ for epoch in range (args.EPOCHS):
             _,d = sess.run( [train_op_gan,disc_loss], feed_dict={'x:0': Xtr})
             tr_d_loss_ar.append(d.mean()) 
             
-        
+        # if i%2==1: 
+        #     sess.run( [train_op_e], feed_dict={'x:0': Xtr})
+
         
     
         
@@ -334,13 +367,15 @@ for epoch in range (args.EPOCHS):
         te_loss=[]
         test_z=[]
         test_z1=[]
+        test_allc_z=[]
         a1=[]
         a2=[]
         a3=[]
 
         for j in range( Xte.shape[0]//args.BS):
-            jte_loss,jtest_z,jtest_z1,ja1,ja2,ja3 = sess.run([loss,prediction_final,prediction_final_2,L1,L2,L3],feed_dict={'x:0': Xte[j*args.BS:(j+1)*args.BS,:] })
+            sc,jte_loss,allc_z,jtest_z,jtest_z1,ja1,ja2,ja3 = sess.run(['pdfError/scale:0', loss,predictions,prediction_final,prediction_final_2,L1,L2,L3],feed_dict={'x:0': Xte[j*args.BS:(j+1)*args.BS,:] })
             te_loss.append(te_loss)
+            test_allc_z.append(allc_z)
             test_z.append(jtest_z)
             test_z1.append(jtest_z1)
             a1.append(ja1)
@@ -351,6 +386,7 @@ for epoch in range (args.EPOCHS):
         a2=np.mean(a2)
         a3=np.mean(a3)
         
+        test_allc_z = np.concatenate( test_allc_z, axis=0)
         test_z = np.concatenate( test_z, axis=0)
         test_z1 = np.concatenate( test_z1, axis=0)
         
@@ -368,10 +404,13 @@ for epoch in range (args.EPOCHS):
         te_loss_ar.append(te_loss.mean())
         print( 'ep=%d, loss = [%.2f , %.2f ], genloss=%.2f, discloss=%.2f, C=[%.3f], max_c : %.3f ,DL=[%.2f,%.2f,%.2f], T=%s'%(epoch+1,NPC*np.mean(tr_loss_ar),NPC*np.mean(te_loss_ar) ,np.mean(tr_g_loss_ar), np.mean(tr_d_loss_ar), corr,max_c, NPC*np.mean(a1),NPC*np.mean(a2),NPC*np.mean(a3), str(now-start_time)))
         print('cov = ', np.round( 100*cov ) )
-        print( np.round( 1000*corr1 ))
-        print( np.round( 100*cov1 ))
         
+        if args.SFPX=='exp':
+            print('sc',sc,np.exp(sc))
+        if args.SFPX=='softplus':
+            print('sc',sc,np.log(1.0+np.exp(sc)) )
         
+       
         start_time = now
         tr_loss_ar=[]
         te_loss_ar=[]    
